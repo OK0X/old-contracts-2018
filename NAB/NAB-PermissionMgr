@@ -1,0 +1,83 @@
+pragma solidity ^0.4.25;
+
+contract PermissionMgr{
+    
+    address public owner;
+    
+    uint public ownerIncome;
+    
+    mapping(address => uint) public permissionLevel;
+    
+    mapping(bytes32 => uint) public functionLevel;
+    
+    constructor()public {
+        owner=msg.sender;
+        initPermission();
+    }
+    
+    modifier onlyOwner(){
+        
+        require(msg.sender == owner,"you are not the owner");
+        _;
+    }
+    
+    function transferOwnershipGRIEI(address newOwner,uint amt)public onlyOwner{
+     
+        owner = newOwner;
+    }
+    
+    function ownerWithDraw()public onlyOwner{
+        owner.transfer(ownerIncome);
+        ownerIncome=0;
+    }
+    
+    function balance()public view returns(uint _balance){
+        _balance=address(this).balance;
+    }
+    
+    function kill(uint password)public onlyOwner{
+        require(password==201901261442,"password is not right");
+        selfdestruct(owner);
+    }
+    
+    function initPermission()private{
+        permissionLevel[owner]=1;
+        //init function permissionLevel...
+        functionLevel[keccak256(abi.encodePacked("setPrice"))]=1;
+        functionLevel[keccak256(abi.encodePacked("addBeneficiary"))]=100;
+        functionLevel[keccak256(abi.encodePacked("modifyBenefitInfo"))]=100;
+        functionLevel[keccak256(abi.encodePacked("mintFEAFJII"))]=9999;
+        functionLevel[keccak256(abi.encodePacked("drawEIFEMN"))]=9999;
+        functionLevel[keccak256(abi.encodePacked("draw2FYM"))]=9999;
+        functionLevel[keccak256(abi.encodePacked("burnFEIFEKS"))]=9999;
+        functionLevel[keccak256(abi.encodePacked("mint2FEAFJII"))]=9999;
+        functionLevel[keccak256(abi.encodePacked("setCoinRecycleAddress"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setContrDraw"))]=100;
+        functionLevel[keccak256(abi.encodePacked("setIntervalHours"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setReferLevelNums"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setAmt"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setRatio"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setWeekRatio"))]=1;
+        
+    }
+    
+    function setPermissionLevel(address _address,uint _level)public onlyOwner{
+        permissionLevel[_address]=_level;
+    }
+    
+    function setFunctionLevel(string _functionName,uint _level)public onlyOwner{
+        functionLevel[keccak256(abi.encodePacked(_functionName))]=_level;
+    }
+    
+    modifier checkPermission(string _functionName){
+        
+        require(permissionLevel[msg.sender] >= functionLevel[keccak256(abi.encodePacked(_functionName))],"permission deny");
+        _;
+    }
+    
+    function getFunctionLevelByName(string _functionName)public view returns(uint _level){
+        _level=functionLevel[keccak256(abi.encodePacked(_functionName))];
+    }
+    
+    
+}

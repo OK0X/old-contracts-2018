@@ -1,0 +1,133 @@
+pragma solidity ^0.4.26;
+import "./PermissionMgr.sol";
+
+interface ISmartOTCProxy{
+    function getOrderbyId(uint id)external view returns(uint8 _status,address _buyer,address _seller,uint _amount,uint _sellerFee,uint _time);
+    function freezeAccount(address target, bool freeze)external;
+    function balanceOf(address _address)external returns(uint balance);
+    function transferAgent(address _from,address _to,uint _value)external;
+    function burnFrom(address _from, uint256 _value) external returns (bool success);
+    function transfer(address _to, uint256 _value) external returns (bool success);
+}
+
+contract SmartOTCProxy is PermissionMgr{
+    
+    uint8 constant decimals = 18;
+    
+    uint tradeSellerFee=20;//
+    uint tradeBuyerFee=20;//
+    uint tokenPrice=0.001 ether;
+    uint cOrderAwardRatio=10000;//
+    uint cPayAwardRatio=20000;//
+    uint burnRatio=10000;//
+    
+    address otcAddress=0xCfaa0E9cdECBff7047563fb610c129d59481E3E7;
+    address tokenAddress=0xE93D6368B260FEa67A626d9e6F3f8Ea8903b6e95;
+    address tokenAwardAddress=0xbace0e2d18775b2fb9b293dff5e2630e2fc290a4;
+    address tokenRecycleAddress=0xbace0e2d18775b2fb9b293dff5e2630e2fc290a4;
+    address burnAddress=0xbace0e2d18775b2fb9b293dff5e2630e2fc290a4;
+    
+    
+    function setTradeFee(uint _tradeSellerFee,uint _tradeBuyerFee,uint _tokenPrice,uint _cOrderAwardRatio,uint _cPayAwardRatio,uint _burnRatio)public checkPermission("setTradeFee"){
+        require(tradeSellerFee <= 20,"hard code feeratio");
+        require(tradeBuyerFee <= 20,"hard code feeratio");
+        tradeSellerFee=_tradeSellerFee;
+        tradeBuyerFee=_tradeBuyerFee;
+        tokenPrice=_tokenPrice;
+        cOrderAwardRatio=_cOrderAwardRatio;
+        cPayAwardRatio=_cPayAwardRatio;
+        burnRatio=_burnRatio;
+    }
+    
+    
+    
+    function setAddress(address _otcAddress,address _tokenAddress,address _tokenAwardAddress,address _tokenRecycleAddress,address _burnAddress)public checkPermission("setAddress"){
+        
+        otcAddress=_otcAddress;
+        tokenAddress=_tokenAddress;
+        tokenAwardAddress=_tokenAwardAddress;
+        tokenRecycleAddress=_tokenRecycleAddress;
+        burnAddress=_burnAddress;
+    }
+    
+    //get fee
+    function getOTCSellerFee(address seller,uint amount)public  returns(uint fee){
+        require(msg.sender==otcAddress,"illgel call");
+        uint originFee=amount * tradeSellerFee/10000;
+        uint needCoins=amount * tradeSellerFee * 10 ** uint256(decimals)/tokenPrice/10000;
+        ISmartOTCProxy token=ISmartOTCProxy(tokenAddress);
+        if(token.balanceOf(seller)>=needCoins){
+            token.transferAgent(seller,tokenRecycleAddress,needCoins);
+            return 0;
+        }else{
+            return originFee;
+        }
+    }
+    
+    function getOTCBuyerFee(address buyer,uint amount)public returns(uint fee){
+        require(msg.sender==otcAddress,"illgel call");
+        uint originFee=amount * tradeBuyerFee/10000;
+        uint needCoins=amount * tradeBuyerFee * 10 ** uint256(decimals)/tokenPrice/10000;
+        ISmartOTCProxy token=ISmartOTCProxy(tokenAddress);
+        if(token.balanceOf(buyer)>=needCoins){
+            token.transferAgent(buyer,tokenRecycleAddress,needCoins);
+            return 0;
+        }else{
+            return originFee;
+        }
+        
+    }
+    
+    
+    //award
+    function confirmOrderCall(uint id)public{
+        require(msg.sender==otcAddress,"illgel call");
+        uint amount;
+        address seller;
+        (,,seller,amount,,)=ISmartOTCProxy(otcAddress).getOrderbyId(id-1);
+        ISmartOTCProxy(tokenAddress).transferAgent(tokenAwardAddress,seller,amount*cOrderAwardRatio/10000);
+    }
+    
+    function confirmPayedCall(uint id)public{
+        require(msg.sender==otcAddress,"illgel call");
+        uint amount;
+        address seller;
+        address buyer;
+        (,buyer,seller,amount,,)=ISmartOTCProxy(otcAddress).getOrderbyId(id);
+        ISmartOTCProxy token=ISmartOTCProxy(tokenAddress);
+        token.transferAgent(tokenAwardAddress,seller,amount*cPayAwardRatio/10000);
+        token.transferAgent(tokenAwardAddress,buyer,amount*cPayAwardRatio/10000);
+        token.burnFrom(burnAddress,amount*burnRatio/10000);
+    }
+    
+    //refund
+    function refundETH2SellerCall(uint id,uint coinValue)public{
+        require(msg.sender==otcAddress,"illgel call");
+        address buyer;
+        address seller;
+        (,buyer,seller,,,)=ISmartOTCProxy(otcAddress).getOrderbyId(id);
+        ISmartOTCProxy token=ISmartOTCProxy(tokenAddress);
+        token.freezeAccount(buyer,true);
+        token.transferAgent(tokenRecycleAddress,seller,coinValue);
+    }
+    
+    function forceTransETH2BuyerCall(uint id)public{
+        require(msg.sender==otcAddress,"illgel call");
+        address seller;
+        (,,seller,,,)=ISmartOTCProxy(otcAddress).getOrderbyId(id);
+        ISmartOTCProxy(tokenAddress).freezeAccount(seller,true);
+    }
+    
+
+    
+    function buyMCoin(uint amount)payable public{
+        require(msg.value>=amount*tokenPrice/(10 ** uint256(decimals)),"value is not right");
+        ISmartOTCProxy(tokenAddress).transfer(msg.sender,amount);
+    }
+    
+    function() external payable{
+        uint256 amount=msg.value*10 ** uint256(decimals)/tokenPrice;
+        ISmartOTCProxy(tokenAddress).transfer(msg.sender,amount);
+    }
+
+} 

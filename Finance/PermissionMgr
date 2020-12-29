@@ -1,0 +1,148 @@
+pragma solidity ^0.4.26;
+//always not change
+interface IPermissionMgr{
+    function transfer(address _to, uint256 _value) external returns (bool success);
+}
+
+contract PermissionMgr{
+    
+    address public owner;
+    
+    address public constant backupOwner=0xf4A4E1CBa7BbEf0CB3200F2eDE188950aDe48778;
+    
+    uint public income=0;
+    
+    uint public ethSingleTransMax=10 ether;
+    
+    mapping(address => uint) public permissionLevel;
+    
+    mapping(bytes32 => uint) public functionLevel;
+    
+    constructor()public {
+        owner=msg.sender;
+        initPermission();
+    }
+    
+    function initPermission()private{
+        permissionLevel[owner]=1;
+        //这些重要权限一定要初始化
+        functionLevel[keccak256(abi.encodePacked("tansferETH"))]=999;
+        functionLevel[keccak256(abi.encodePacked("tansferERC20"))]=999;
+        functionLevel[keccak256(abi.encodePacked("setEthSingleTransMax"))]=999;
+        functionLevel[keccak256(abi.encodePacked("transferIncome"))]=100;
+        
+        //smartotc
+        // functionLevel[keccak256(abi.encodePacked("setSingleLimited"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setFeeProxy"))]=100;
+        // functionLevel[keccak256(abi.encodePacked("refundETH2Seller"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("forceTransETH2Buyer"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setTradeFee"))]=10;
+        
+        //ZRXTpool
+        // functionLevel[keccak256(abi.encodePacked("setDrawDayRatio"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setDrawMax"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setDrawInterval"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("adminDrawETH"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setPoolIZRXTPool"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("adminDrawZRXT"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setZRXTPrice"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setSingBlockLimited"))]=1;
+        
+        //ZRXTmgr
+        // functionLevel[keccak256(abi.encodePacked("setZRXTThreshold"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setETHThreshold"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setEthFreeSignValue"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setErc20FreeSignValue"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setERC20Admin"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setETHAdmin"))]=1;
+        
+        //mytoken
+        // functionLevel[keccak256(abi.encodePacked("setChargingAddress"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setAwardsAddress"))]=1;
+        
+        //smart finance
+        functionLevel[keccak256(abi.encodePacked("setGlobalConfig"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setAllowedToken"))]=10;
+        functionLevel[keccak256(abi.encodePacked("setSuperNodeAddress"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setAllowedProxy"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setFeeUseETH"))]=1;
+        functionLevel[keccak256(abi.encodePacked("setMasterRefer"))]=100;
+        
+        //smart finance proxy
+        // functionLevel[keccak256(abi.encodePacked("setContrDraw"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setInvestConfig"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setRatio"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setRatio2"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setReferLevel"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setWeekRatio"))]=1;
+        // functionLevel[keccak256(abi.encodePacked("setIntervalHours"))]=1;
+    }
+    
+    modifier onlyOwner(){
+        
+        require(msg.sender == owner,"you are not the owner");
+        _;
+    }
+    
+    modifier checkPermission(string _functionName){
+        
+        require(permissionLevel[msg.sender] >= functionLevel[keccak256(abi.encodePacked(_functionName))],"permission deny");
+        _;
+    }
+    
+    function transferOwnerXYZ(address newOwner)public onlyOwner{
+     
+        owner = newOwner;
+    }
+    
+    function transferOwnerXYZUseBackup(address newOwner)public {
+        require(msg.sender==backupOwner,"you are not backupOwner");
+        owner = newOwner;
+    }
+    
+    function setPermissionLevel(address _address,uint _level)public onlyOwner{
+        permissionLevel[_address]=_level;
+    }
+    
+    function setFunctionLevel(string _functionName,uint _level)public onlyOwner{
+        functionLevel[keccak256(abi.encodePacked(_functionName))]=_level;
+    }
+    
+    function killAAA(uint password,address _to)public onlyOwner{
+        require(password==201901261442,"password is not right");
+        selfdestruct(_to);
+    }
+    
+    function setEthSingleTransMax(uint _ethSingleTransMax)public checkPermission("setEthSingleTransMax"){
+        ethSingleTransMax=_ethSingleTransMax;
+    }
+    
+    function tansferETH(address to,uint _value)public checkPermission("tansferETH"){
+        require(_value <= ethSingleTransMax,"single excceed");
+        to.transfer(_value);
+    }
+    
+    function transferIncome(address to,uint _value)public checkPermission("transferIncome"){
+        require(income >= _value,"_value excceed error");
+        income-=_value;
+        to.transfer(_value);
+    }
+    
+    function tansferERC20(address erc20,address to,uint _value)public checkPermission("tansferERC20"){
+        IPermissionMgr erc20coin=IPermissionMgr(erc20);
+        erc20coin.transfer(to,_value);
+    }
+    
+    function getFunctionLevelByName(string _functionName)public view returns(uint _level){
+        _level=functionLevel[keccak256(abi.encodePacked(_functionName))];
+    }
+    
+    function getBalance()public view returns(uint _balance){
+        _balance=address(this).balance;
+    }
+    
+    function() external payable{
+        
+    }
+    
+}

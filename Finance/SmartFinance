@@ -1,0 +1,353 @@
+pragma solidity ^0.4.26;
+import "./PermissionMgr.sol";
+
+
+
+interface ISmartFinance{
+    
+    function chargingAgent(address _from,address _to,uint _value)external;
+    function computeInvestDraw(uint id,uint amt,uint msgvalue)external returns(uint drawAmt,bool[2] isLiveRepay);
+    function computeReferAwards(address _token,address msgsender,uint msgvalue)external;
+    function referWithdrawCheck(address _token,address msgsender,uint amt)external returns(bool allow);
+    function dosomething(address _originalSender,uint _value)external;
+    function contrDrawCheck(address _token,uint _value)external returns(bool isOK);
+}
+
+contract SmartFinance is PermissionMgr {
+    
+    uint8 public constant decimals = 18;
+    
+    mapping(address => bool) public allowedToken;
+    mapping(address => uint) public tokenPrice;
+    mapping(address => address) public proxyAddress;
+    mapping(address => address) public poolAddress;
+    mapping(address => uint) public ethPool;
+    
+    mapping(address => bool) public allowedProxy;
+    
+    
+    struct Invest{
+        address token;
+        address investor;
+        uint amt;
+        uint time;
+        uint alreadyDraw;
+        bool isLive;
+    }
+    
+    Invest[] invests;
+    
+    mapping(address => mapping(address => uint)) public totalInvest;
+    
+    event investEvent(address indexed _token,address indexed inverstor,uint investid,uint amt,uint time);
+    
+    event referEvent(address indexed referWho,address indexed whoRefer);
+    
+    event investDrawEvent(address indexed token,address indexed inverstor,uint id,uint drawAmt,uint time);
+    
+    event referDrawEvent(address indexed _token,address indexed inverstor,uint drawAmt,uint time);
+    
+    mapping(address => mapping(address => address)) public refermap;
+    
+    mapping(address => mapping(address => uint)) public referNums;
+    
+    mapping(address => mapping(address => uint)) public referAwards;
+    
+    mapping(address => mapping(address => uint)) public referDrawTotal;
+    
+    mapping(address => mapping(address => uint)) public referLastdrawTi;
+    
+    mapping(address => mapping(address => uint)) public investDrawTotal;
+    
+    mapping(address => mapping(address => uint)) public lastInvestAmt;
+    
+    mapping(address => mapping(address => uint)) public lastinvestTMap;
+    
+    mapping(address => uint) public investInterval;
+    
+    uint  totolApproveAmt=2100000 ether;
+    uint  minPerInvest=0.1 ether;
+    uint  maxPerInvest=100 ether;
+    
+    mapping(address => uint) public handlingFeeBuy;
+    mapping(address => uint) public handlingFeeSell;
+    mapping(address => uint) public referDrawFee;
+    mapping(address => uint) public handlingFeeBuyETH;
+    mapping(address => uint) public handlingFeeSellETH;
+    mapping(address => uint) public referDrawFeeETH;
+    
+    mapping(address => mapping(address => bool)) public superNodesAddress;
+    
+    mapping(address => uint) public contrDrawRatio;
+    mapping(address => uint) public contrDrawAcctBalance;
+    mapping(address => uint) public totalContrDraw;
+    mapping(address => uint) public contrDrawLastT;
+
+    event ContrDrawEvent(address indexed _token,address indexed drawer,uint amt,uint time);
+    
+    function setGlobalConfig(uint _totolApproveAmt,uint _minPerInvest,uint _maxPerInvest)public checkPermission("setGlobalConfig"){
+        
+        totolApproveAmt=_totolApproveAmt;
+        minPerInvest=_minPerInvest;
+        maxPerInvest=_maxPerInvest;
+    }
+    
+    function setAllowedToken(address _token,bool _isAllowed,uint _price,address _proxyAddress,address _poolAddress,uint _contrDrawRatio,uint _buyfee,uint _sellfee,uint _investInterval,uint _referDrawFee)checkPermission("setAllowedToken") public{
+        allowedToken[_token]=_isAllowed;
+        tokenPrice[_token]=_price;
+        proxyAddress[_token]=_proxyAddress;
+        allowedProxy[_proxyAddress]=true;
+        poolAddress[_token]=_poolAddress;
+        contrDrawRatio[_token]=_contrDrawRatio;
+        handlingFeeBuy[_token]=_buyfee;
+        handlingFeeSell[_token]=_sellfee;
+        investInterval[_token]=_investInterval;
+        referDrawFee[_token]=_referDrawFee;
+    }
+    
+    function setFeeUseETH(address _token,uint _handlingFeeBuyETH,uint _handlingFeeSellETH,uint _referDrawFeeETH)checkPermission("setFeeUseETH") public{
+        
+        handlingFeeBuyETH[_token]=_handlingFeeBuyETH;
+        handlingFeeSellETH[_token]=_handlingFeeSellETH;
+        referDrawFeeETH[_token]=_referDrawFeeETH;
+        
+    }
+    
+    function setAllowedProxyOnly(address _proxyAddress,bool _isAllowed)checkPermission("setAllowedProxy") public{
+        allowedProxy[_proxyAddress]=_isAllowed;
+    }
+    
+    function setSuperNodeAddress(address _token,address _address,bool _isAllowed)public checkPermission("setSuperNodeAddress"){
+        superNodesAddress[_token][_address]=_isAllowed;
+    }
+    
+    function setMasterRefer(address _token,address _address,uint _value)checkPermission("setMasterRefer") public{
+        referAwards[_token][_address]+=_value;
+    }
+    
+    function contrDraw(address _token,uint amt)public{
+        require(allowedToken[_token]==true,"ilegal call");
+        require(superNodesAddress[_token][msg.sender]==true,"you are not super address");
+        
+        ISmartFinance proxy=ISmartFinance(proxyAddress[_token]);
+        require(proxy.contrDrawCheck(_token,amt)==true,"contrDrawCheck failed");
+        
+        require(amt <= contrDrawAcctBalance[_token],"contrDrawAcctBalance not enough");
+        contrDrawAcctBalance[_token]-=amt;
+        totalContrDraw[_token]+=amt;
+        contrDrawLastT[_token]=now;
+        
+        require(ethPool[_token] >= amt,"ethpool not enough");
+        ethPool[_token]-=amt;
+        msg.sender.transfer(amt);
+        emit ContrDrawEvent(_token,msg.sender,amt,now);
+        
+    }
+    
+    function dispatchAward2SuperNodes(address _token,uint actualAmount)private {
+        
+        contrDrawAcctBalance[_token]+=actualAmount*contrDrawRatio[_token]/10000;
+        
+    }
+    
+    function updateReferAwards(address _token,address _address,uint _value)external {
+        require(allowedProxy[msg.sender]==true,"ilegal call");
+        referAwards[_token][_address]+=_value;
+    }
+    
+    function addInvest(address _token)private{
+        
+        ISmartFinance isfToken=ISmartFinance(_token);
+        uint needMcoin=msg.value * 10 ** uint256(decimals)*handlingFeeBuy[_token]/10000/tokenPrice[_token];
+        isfToken.chargingAgent(msg.sender,poolAddress[_token],needMcoin);
+        
+        uint feeETH=msg.value*handlingFeeBuyETH[_token]/10000;
+        income+=feeETH;
+        require(msg.value > feeETH,"handlingFeeBuyETH error");
+        uint actualAmount=msg.value-feeETH;
+        
+        uint investid=invests.push(Invest(_token,msg.sender,actualAmount,now,0,true));
+        emit investEvent(_token,msg.sender,investid,actualAmount,now);
+        lastInvestAmt[_token][msg.sender]=actualAmount;
+        totalInvest[_token][msg.sender]+=actualAmount;
+        
+        dispatchAward2SuperNodes(_token,actualAmount);
+        
+        ISmartFinance proxy=ISmartFinance(proxyAddress[_token]);
+        proxy.computeReferAwards(_token,msg.sender,actualAmount);
+        
+        ethPool[_token]+=actualAmount;
+        
+    }
+    
+    
+    function investOnce(address _token)public payable{
+        require(allowedToken[_token]==true,"ilegal token");
+        require(msg.value >= minPerInvest && msg.value <= maxPerInvest,"msg value is not right");
+        require(totolApproveAmt >= address(this).balance,"no Amount");
+        require(now > lastinvestTMap[_token][msg.sender] && (now - lastinvestTMap[_token][msg.sender]) >= investInterval[_token],"invest interval limited");
+        lastinvestTMap[_token][msg.sender]=now;
+        addInvest(_token);
+        
+        
+    }
+    
+    function referAndInvestOnce(address refer,address _token)public payable{
+        require(allowedToken[_token]==true,"ilegal token");
+        require(refer!=msg.sender,"Can't refer self");
+        require(refermap[_token][msg.sender]==address(0x0),"you have already set refer");
+        refermap[_token][msg.sender]=refer;
+        referNums[_token][refer]++;
+        emit referEvent(refer,msg.sender);
+        
+        investOnce(_token);
+    }
+    
+    
+    function onlyRefer(address _token,address refer)public{
+        require(allowedToken[_token]==true,"ilegal token");
+        require(refer!=msg.sender,"Can't refer self");
+        require(refermap[_token][msg.sender]==address(0x0),"you have already set refer");
+        refermap[_token][msg.sender]=refer;
+        referNums[_token][refer]++;
+        emit referEvent(refer,msg.sender);
+        
+    }
+    
+    
+    function investWithdraw(uint id,uint amt)public payable{
+
+        require(amt > 0 ,"amt > 0");
+
+        Invest storage i=invests[id];
+        require(i.investor==msg.sender,"it is not your invest");
+        require(i.isLive,"this order is finished");
+
+
+        ISmartFinance proxy=ISmartFinance(proxyAddress[i.token]);
+        uint drawAmt;
+        bool[2] memory isLiveRepay;
+        (drawAmt,isLiveRepay)=proxy.computeInvestDraw(id,amt,msg.value);
+        i.alreadyDraw+=drawAmt;
+        i.isLive=isLiveRepay[0];
+        if(isLiveRepay[1]){
+            addInvest(i.token);
+        }
+        
+        uint feeETH=drawAmt*handlingFeeSellETH[i.token]/10000;
+        income+=feeETH;
+        require(drawAmt > feeETH,"handlingFeeSellETH error");
+        uint actualDrawAmount=drawAmt-feeETH;
+        
+        require(ethPool[i.token] >= drawAmt,"pool not enough");
+        ethPool[i.token]-=drawAmt;
+        msg.sender.transfer(actualDrawAmount);
+        
+        
+        
+        ISmartFinance isfToken=ISmartFinance(i.token);
+        uint needMcoin=drawAmt * 10 ** uint256(decimals)*handlingFeeSell[i.token]/10000/tokenPrice[i.token];
+        isfToken.chargingAgent(msg.sender,poolAddress[i.token],needMcoin);
+        
+        
+        emit investDrawEvent(i.token,msg.sender,id,actualDrawAmount,now);
+        investDrawTotal[i.token][msg.sender]+=actualDrawAmount;
+        
+    }
+    
+    
+    function referWithdraw(uint amt,address _token)public{
+        require(allowedToken[_token]==true,"ilegal token");
+        require(amt > 0,"amt must bigger than zero");
+        ISmartFinance proxy=ISmartFinance(proxyAddress[_token]);
+        require(proxy.referWithdrawCheck(_token,msg.sender,amt)==true,"withdraw check failed");
+        
+        require(amt <= referAwards[_token][msg.sender],"amt can not bigger than refer balance");
+        referAwards[_token][msg.sender]-=amt;
+        referDrawTotal[_token][msg.sender]+=amt;
+        referLastdrawTi[_token][msg.sender]=now;
+        
+        uint feeETH=amt*referDrawFeeETH[_token]/10000;
+        income+=feeETH;
+        require(amt > feeETH,"referDrawFeeETH error");
+        uint actualDrawAmount=amt-feeETH;
+
+        require(ethPool[_token] >= amt,"pool not enough");
+        ethPool[_token]-=amt;
+        msg.sender.transfer(actualDrawAmount);
+
+        ISmartFinance isfToken=ISmartFinance(_token);
+        uint needMcoin=amt * 10 ** uint256(decimals)*referDrawFee[_token]/10000/tokenPrice[_token];
+        isfToken.chargingAgent(msg.sender,poolAddress[_token],needMcoin);
+        
+        emit referDrawEvent(_token,msg.sender,amt,now);
+        
+    }
+    
+
+    function dosomething(address _proxyAddress)public payable{
+        require(allowedProxy[_proxyAddress]==true,"ilegal _proxyAddress");
+        ISmartFinance proxy=ISmartFinance(_proxyAddress);
+        proxy.dosomething(msg.sender,msg.value);
+    }
+    
+    function getInvestInfoById(uint id)public view returns(address _token,bool _status,address _investor,uint _amt,uint _time,uint _alreadyDraw){
+        Invest memory invest=invests[id];
+        _token=invest.token;
+        _status=invest.isLive;
+        _investor=invest.investor;
+        _amt=invest.amt;
+        _time=invest.time;
+        _alreadyDraw=invest.alreadyDraw;
+        
+    }
+    
+    
+    function getPersonalInfo(address _token,address msgsender)public view returns(uint _referNum,uint _alreadget,uint _referBalance,uint _referLastT,uint _totalInvest,uint _investDrawTotal,address _myupper,uint _lastinvestTime,bool _isSuperNodeAddress){
+        _referNum=referNums[_token][msgsender];
+        _alreadget=referDrawTotal[_token][msgsender];
+        _referBalance=referAwards[_token][msgsender];
+        _referLastT=referLastdrawTi[_token][msgsender];
+        _totalInvest=totalInvest[_token][msgsender];
+        _investDrawTotal=investDrawTotal[_token][msgsender];
+        _myupper=refermap[_token][msgsender];
+        _lastinvestTime=lastinvestTMap[_token][msgsender];
+        _isSuperNodeAddress=superNodesAddress[_token][msgsender];
+    }
+    
+    function getTokenInfo(address _token)public view returns(
+    uint _totolApproveAmt,
+    uint _minPerInvest,
+    uint _maxPerInvest,
+    uint _handlingFeeSell,
+    uint _handlingFeeBuy,
+    uint _investInterval,
+    uint _tokenPrice,
+    address _proxyAddress,
+    address _poolAddress,
+    uint _eth,
+    uint _contrDrawAcctBalance,
+    uint _totalContrDraw,
+    uint _contrDrawLastT){
+        
+        _totolApproveAmt=totolApproveAmt;
+        _minPerInvest=minPerInvest;
+        _maxPerInvest=maxPerInvest;
+        _handlingFeeSell=handlingFeeSell[_token];
+        _handlingFeeBuy=handlingFeeBuy[_token];
+        _investInterval=investInterval[_token];
+        _tokenPrice=tokenPrice[_token];
+        _proxyAddress=proxyAddress[_token];
+        _poolAddress=poolAddress[_token];
+        _eth=ethPool[_token];
+        _contrDrawAcctBalance=contrDrawAcctBalance[_token];
+        _totalContrDraw=totalContrDraw[_token];
+        _contrDrawLastT=contrDrawLastT[_token];
+        
+    }
+    
+    
+    
+    
+    
+}

@@ -1,0 +1,261 @@
+pragma solidity ^0.4.25;
+import "./Untitled.sol";
+
+interface INameAddressBinding{
+    function registeNameNotify(address register,string mobile,string name,string payMethod1,string payMethod2,string payMethod3)external;
+    function registeNameNotify2(address register,string name,uint id)external;
+    function registeNameNotify3(address register,string name,uint id,string extra)external;
+}
+
+contract NameAddressBinding is PermissionMgr{
+    
+    
+    //name address part
+    mapping(address => string) addressName;
+    mapping(string => address) nameAddress;
+    
+    event RegisteNameEvent(address indexed register,string name,uint time);
+    
+    uint8 public nameMinLength=5;
+    uint8 public nameMaxLength=12;
+    uint8 public freeNameLength=6;
+    
+    uint public priceLeve1=10 ether;
+    uint public priceLeve2=5 ether;
+    uint public priceLeve3=1 ether;
+    uint public priceLeve4=0.1 ether;
+    uint public priceLeve5=0.01 ether;
+    
+    event ChangeMyNameAddressEvent(string name,address indexed newAddrs,address indexed oldAdds);
+    
+    struct SellInfo{
+        
+        address seller;
+        uint priceByEth;
+        bool isSelling;
+    }
+    
+    mapping(string =>SellInfo) sellmap;
+    
+    event SellName(string name,uint priceByEth,address indexed seller);
+    
+    event CancelSell(string name,address indexed owner);
+    
+    event ChangePrice(string name,uint priceByEth,address indexed owner);
+    
+    event BuyName(string name,address indexed buyer,address indexed seller);
+    
+    uint public nameSellMaxETH=100 ether;//sell name eth最大支付限额
+    
+    uint public nameSellFeeRatio=100;//万分之
+    
+  
+    function utfStringLength(bytes string_rep) private pure
+    returns (uint length)
+    {
+        uint i=0;
+
+        while (i<string_rep.length)
+        {
+            if (string_rep[i]>>7==0)
+                i+=1;
+            else if (string_rep[i]>>5==0x6)
+                i+=2;
+            else if (string_rep[i]>>4==0xE)
+                i+=3;
+            else if (string_rep[i]>>3==0x1E)
+                i+=4;
+            else
+                //For safety
+                i+=1;
+
+            length++;
+        }
+    } 
+    
+    function _toLowercase(string str) private pure returns(string){
+        bytes memory bStr=bytes(str);
+        bytes memory bLower=new bytes(bStr.length);
+        for(uint i=0;i<bStr.length;i++){
+            
+            if((bStr[i] >= 65) && (bStr[i] <= 90)){
+                bLower[i]=bytes1(uint8(bStr[i])+32);
+            }else{
+                bLower[i]=bStr[i];
+            }
+        }
+        
+        return string(bLower);
+    }
+    
+    function setNameLength(uint8 min,uint8 max,uint8 freeLength,uint _nameSellFeeRatio)public checkPermission("setNameLength") {
+        
+        nameMinLength=min;
+        nameMaxLength=max;
+        freeNameLength=freeLength;
+        nameSellFeeRatio=_nameSellFeeRatio;
+    }
+    
+    
+    function setNamePrice(uint _priceLeve1,uint _priceLeve2,uint _priceLeve3,uint _priceLeve4,uint _priceLeve5,uint _nameSellMaxETH)public checkPermission("setNamePrice"){
+        priceLeve1=_priceLeve1;
+        priceLeve2=_priceLeve2;
+        priceLeve3=_priceLeve3;
+        priceLeve4=_priceLeve4;
+        priceLeve5=_priceLeve5;
+        nameSellMaxETH=_nameSellMaxETH;
+    }
+    
+    
+    function registeNameByEth(string name)public payable{
+        name=_toLowercase(name);
+        uint length=utfStringLength(bytes(name));
+        require(length <= nameMaxLength && length >= nameMinLength,"name is too long or too short");
+        require(nameAddress[name]==0x0,"this name is already registered");
+        
+        
+        if(length < freeNameLength){
+            
+            uint needPayValue=0;
+            
+            if(length==1){
+                needPayValue=priceLeve1;
+            }else if(length==2){
+                needPayValue=priceLeve2;
+            }else if(length==3){
+                needPayValue=priceLeve3;
+            }else if(length==4){
+                needPayValue=priceLeve4;
+            }else{
+                needPayValue=priceLeve5;
+            }
+            
+            
+            require(msg.value==needPayValue,"you need pay the right value");
+            ownerIncome += msg.value;
+            
+        }
+        
+        //解除旧绑定
+        nameAddress[addressName[msg.sender]]=0x0;
+        
+        //建立新绑定
+        nameAddress[name]=msg.sender;
+        addressName[msg.sender]=name;
+        
+        emit RegisteNameEvent(msg.sender,name,now);
+        
+    }
+    
+    function registeNameWithNotify(string ensname,address recipient,string mobile,string name,string payMethod1,string payMethod2,string payMethod3)public payable{
+        registeNameByEth(ensname);
+        INameAddressBinding INAB=INameAddressBinding(recipient);
+        INAB.registeNameNotify(msg.sender,mobile,name,payMethod1,payMethod2,payMethod3);
+    }
+    
+    function registeNameNotify2(string ensname,address recipient,string name,uint id)public payable{
+        registeNameByEth(ensname);
+        INameAddressBinding INAB=INameAddressBinding(recipient);
+        INAB.registeNameNotify2(msg.sender,name,id);
+    }
+    
+    function registeNameNotify3(string ensname,address recipient,string name,uint id,string extra)public payable{
+        registeNameByEth(ensname);
+        INameAddressBinding INAB=INameAddressBinding(recipient);
+        INAB.registeNameNotify3(msg.sender,name,id,extra);
+    }
+    
+    
+    function changeMyNameAddress(string name,address newAddrs)public {
+        
+        require(newAddrs!=0x0,"new address must not be 0x0");
+        require(nameAddress[name]==msg.sender,"you are not the name owner");
+        //解除旧绑定
+        addressName[msg.sender]="";
+        nameAddress[addressName[newAddrs]]=0x0;
+        
+        //建立新绑定
+        nameAddress[name]=newAddrs;
+        addressName[newAddrs]=name;
+        
+        emit ChangeMyNameAddressEvent(name,newAddrs,msg.sender);
+    }
+
+    
+    //name exchange
+    function sellName(string name,uint priceEth)public {
+        name=_toLowercase(name);
+        require(nameAddress[name]==msg.sender,"you are not the name owner");
+        
+        require(priceEth > 0 && priceEth <= nameSellMaxETH,"price range error");
+        
+        sellmap[name].seller=msg.sender;
+        sellmap[name].priceByEth=priceEth;
+        sellmap[name].isSelling=true;
+        
+        emit SellName(name,priceEth,msg.sender);
+        
+    }
+    
+    function cancelSelling(string name)public {
+        name=_toLowercase(name);
+        require(nameAddress[name]==msg.sender,"you are not the name owner");
+        sellmap[name].isSelling=false;
+        
+        emit CancelSell(name,msg.sender);
+        
+    }
+    
+    function changeSellPrice(string name,uint newPriceEth)public{
+        name=_toLowercase(name);
+        require(nameAddress[name]==msg.sender,"you are not the name owner");
+        sellmap[name].priceByEth=newPriceEth;
+        
+        emit ChangePrice(name,newPriceEth,msg.sender);
+    }
+    
+    
+    function buyNameUseEth(string name)public payable{
+        name=_toLowercase(name);
+        require(sellmap[name].isSelling==true,"the name is not selling");
+        
+        //use eth to pay
+        require(msg.value==sellmap[name].priceByEth,"you should send the right value");
+        
+        uint sellerIncome=msg.value * (10000-nameSellFeeRatio)/10000;
+        ownerIncome += (msg.value - sellerIncome); 
+        sellmap[name].seller.transfer(sellerIncome);
+        
+        //解除旧绑定
+        addressName[sellmap[name].seller]="";
+        nameAddress[addressName[msg.sender]]=0x0;
+        
+        //建立新绑定
+        nameAddress[name]=msg.sender;
+        addressName[msg.sender]=name;
+      
+        sellmap[name].isSelling=false;
+
+        emit BuyName(name,msg.sender,sellmap[name].seller);
+        
+        
+    }
+    
+    function getAddress(string name)public view returns(address _address){
+        _address=nameAddress[name];
+    }
+    
+    function getName(address _address)public view returns(string name){
+        name=addressName[_address];
+    }
+    
+    function getNameSellingInfo(string name)public view returns(address seller,uint price,bool isSelling){
+        seller=sellmap[name].seller;
+        price=sellmap[name].priceByEth;
+        isSelling=sellmap[name].isSelling;
+    }
+    
+    function contractWithDraw()public checkPermission("contractWithDraw"){
+        msg.sender.transfer(address(this).balance);
+    }
+}

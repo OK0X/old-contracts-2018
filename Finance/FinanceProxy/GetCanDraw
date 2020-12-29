@@ -1,0 +1,84 @@
+pragma solidity ^0.4.26;
+
+interface ISmartFinanceProxy{
+    
+    function getInvestInfoById(uint id)external view returns(address _token,bool _status,address _investor,uint _amt,uint _time,uint _alreadyDraw);
+}
+
+contract GetCanDraw{
+    
+    address public smartFinanceAddress=0xeD5031C81c07C34e21b59BBDb2757d2535c3208e;
+    
+    address public owner;
+    
+    uint public week1Ratio=0;//万分之
+    uint public week2Ratio=0;//万分之
+    uint public week3Ratio=300;//万分之
+    uint public week4Ratio=1300;//万分之
+    uint public investDrawInterval=86400;
+    
+    constructor()public{
+        owner=msg.sender;
+    }
+    
+    function setInvestConfig(address _smartFinanceAddress,uint _week1Ratio,uint _week2Ratio,uint _week3Ratio,uint _week4Ratio,uint _investDrawInterval)public{
+        require(msg.sender==owner);
+        smartFinanceAddress=_smartFinanceAddress;
+        week1Ratio=_week1Ratio;
+        week2Ratio=_week2Ratio;
+        week3Ratio=_week3Ratio;
+        week4Ratio=_week4Ratio;
+        investDrawInterval=_investDrawInterval;
+    }
+    
+    //app端也可以直接调用 gas free
+    function getCanDrawInfo(uint id)public view returns(uint _candraw,uint _repayDraw){
+        uint iamt;
+        uint itime;
+        uint tAlreadyDraw;
+        (,,,iamt,itime,tAlreadyDraw)=ISmartFinanceProxy(smartFinanceAddress).getInvestInfoById(id);
+        uint bx1=(iamt+iamt*week1Ratio*7/10000)*50/100;
+        uint bx2=(bx1+bx1*week2Ratio*7/10000)*50/100;
+        uint bx3=(bx2+bx2*week3Ratio*7/10000)*50/100;
+        uint bx4=(bx3+bx3*week4Ratio*7/10000);
+        uint[4] memory bx=[bx1,bx2,bx3,bx4];
+        uint[3] memory params=[itime,iamt,tAlreadyDraw];
+        return getCanDrawInfo2(params,bx);
+    }
+    
+    function getCanDrawInfo2(uint[3] params,uint[4] bx)private view returns(uint _candraw,uint _repayDraw){
+        
+        uint nowday=(now-params[0])/investDrawInterval;
+        require(nowday >= 7,"nowday < 7");
+        if(nowday < 14){
+            //w2
+            uint tTotal2=bx[0];
+            require(tTotal2>=params[2],"w2 safe check");
+            _candraw=tTotal2-params[2];
+            _repayDraw=0;
+
+        }else if(nowday >= 14 && nowday < 21){
+            //w3
+            uint tTotal3=bx[0]+bx[1];
+            require(tTotal3 >= params[2],"w3 safe check");
+            _candraw=tTotal3 - params[2];
+            _repayDraw=0;
+            
+        }else if(nowday >= 21 && nowday < 28){
+            //w4
+            uint tTotal4=bx[0]+bx[1]+bx[2];
+            require(tTotal4 >= params[2],"w4 safe check");
+            _candraw=tTotal4 - params[2];
+            _repayDraw=0;
+            
+        }else{
+            //w5
+            uint tTotal5=bx[0]+bx[1]+bx[2];
+            require(tTotal5 >= params[2],"w5 safe check");
+            _candraw=tTotal5 - params[2];
+            _repayDraw=_candraw+bx[3];
+            
+            
+        }
+    }
+}

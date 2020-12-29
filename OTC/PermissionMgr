@@ -1,0 +1,92 @@
+pragma solidity ^0.4.26;
+//always not change
+interface IPermissionMgr{
+    function transfer(address _to, uint256 _value) external returns (bool success);
+}
+
+contract PermissionMgr{
+    
+    address public owner;
+    
+    address public constant backupOwner=0xf4A4E1CBa7BbEf0CB3200F2eDE188950aDe48778;
+    
+    uint public income=0;
+    
+    mapping(address => uint) public permissionLevel;
+    
+    mapping(bytes32 => uint) public functionLevel;
+    
+    constructor()public {
+        owner=msg.sender;
+        initPermission();
+    }
+    
+    function initPermission()private{
+        permissionLevel[owner]=10;
+        //
+        functionLevel[keccak256(abi.encodePacked("tansferERC20"))]=100;
+        functionLevel[keccak256(abi.encodePacked("transferIncome"))]=100;
+        
+        //otc proxy
+        functionLevel[keccak256(abi.encodePacked("checkPermission"))]=10;
+        functionLevel[keccak256(abi.encodePacked("setAddress"))]=10;
+        
+        
+        
+    }
+    
+    modifier onlyOwner(){
+        
+        require(msg.sender == owner,"you are not the owner");
+        _;
+    }
+    
+    modifier checkPermission(string _functionName){
+        
+        require(permissionLevel[msg.sender] >= functionLevel[keccak256(abi.encodePacked(_functionName))],"permission deny");
+        _;
+    }
+    
+    function transferOwnerXYZ(address newOwner)public onlyOwner{
+     
+        owner = newOwner;
+    }
+    
+    function transferOwnerXYZUseBackup(address newOwner)public {
+        require(msg.sender==backupOwner,"you are not backupOwner");
+        owner = newOwner;
+    }
+    
+    function setPermissionLevel(address _address,uint _level)public onlyOwner{
+        permissionLevel[_address]=_level;
+    }
+    
+    function setFunctionLevel(string _functionName,uint _level)public onlyOwner{
+        functionLevel[keccak256(abi.encodePacked(_functionName))]=_level;
+    }
+    
+    
+    function transferIncome(address to,uint _value)public checkPermission("transferIncome"){
+        require(income >= _value,"_value excceed error");
+        income-=_value;
+        to.transfer(_value);
+    }
+    
+    function tansferERC20(address erc20,address to,uint _value)public checkPermission("tansferERC20"){
+        IPermissionMgr erc20coin=IPermissionMgr(erc20);
+        erc20coin.transfer(to,_value);
+    }
+    
+    function getFunctionLevelByName(string _functionName)public view returns(uint _level){
+        _level=functionLevel[keccak256(abi.encodePacked(_functionName))];
+    }
+    
+    function getBalance()public view returns(uint _balance){
+        _balance=address(this).balance;
+    }
+    
+    function() external payable{
+        
+    }
+    
+}

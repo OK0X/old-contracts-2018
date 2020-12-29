@@ -1,0 +1,127 @@
+pragma solidity ^0.4.26;
+import "./PermissionMgr.sol";
+
+
+interface ISmartOTC{
+    function getOTCBuyerFee(address buyer,uint amount)external returns(uint _fee);
+    function getOTCSellerFee(address seller,uint amount)external returns(uint _fee);
+    function confirmOrderCall(uint id)external;
+    function confirmPayedCall(uint id)external;
+    function refundETH2SellerCall(uint id,uint tokenValue)external;
+    function forceTransETH2BuyerCall(uint id)external;
+}
+
+contract SmartOTC is PermissionMgr{
+    
+    address public proxyAddress=0x692a70D2e424a56D2C6C27aA97D1a86395877b3A;
+    ISmartOTC proxy=ISmartOTC(proxyAddress);
+    
+    uint8 constant OSMaking=1;
+    uint8 constant OSCanceled=2;
+    uint8 constant OSFinished=3;
+    
+    struct Order{
+        address seller;
+        address buyer;
+        uint amount;
+        uint sellerFee;
+        uint time;
+        uint8 status;
+    }
+    
+    Order[] orders;
+    
+    uint public singleMin=0 ether;
+    uint public singleMax=1000 ether;
+    
+    mapping(address => uint) public tradeVolume;
+    
+    
+    event ConfirmOrderEvent(uint id,address indexed seller,address indexed buyer,uint amount,uint time);
+    event ConfirmPayedEvent(address indexed seller,address indexed buyer,uint amount,uint time);
+    
+    function setSingleLimited(uint _singleMin,uint _singleMax)public checkPermission("setSingleLimited"){
+        
+        singleMin=_singleMin;
+        singleMax=_singleMax;
+    }
+    
+    function setProxy(address _proxyAddress)public checkPermission("setProxy"){
+        proxyAddress=_proxyAddress;
+        proxy=ISmartOTC(proxyAddress);
+    }
+    
+    function confirmOrder(uint _amount,address _buyer)public payable {
+        
+        require(_amount >= singleMin && _amount <= singleMax,"single excceed limited");
+        uint fee=proxy.getOTCSellerFee(msg.sender,_amount);
+        uint actualDeposite=_amount+fee;
+        income+=fee;
+        require(msg.value==actualDeposite,"Wrong amount of deposite");
+        uint id=orders.push(Order(msg.sender,_buyer,_amount,fee,now,OSMaking));
+        emit ConfirmOrderEvent(id,msg.sender,_buyer,_amount,now);
+        proxy.confirmOrderCall(id);
+        
+    }
+    
+
+    
+    function confirmPayed(uint id)public{
+        Order storage order=orders[id];
+        require(order.status==OSMaking && order.seller==msg.sender,"order is not making or not yours");
+        order.status=OSFinished;
+        
+        uint fee=proxy.getOTCBuyerFee(order.buyer,order.amount);
+        require(order.amount > fee,"fee error");
+        uint actualHarvest=order.amount-fee;
+        income+=fee;
+        order.buyer.transfer(actualHarvest);
+        
+        tradeVolume[order.seller]+=order.amount;
+        tradeVolume[order.buyer]+=actualHarvest;
+        
+        emit ConfirmPayedEvent(order.seller,order.buyer,order.amount,now);
+        proxy.confirmPayedCall(id);
+    }
+    
+    
+    function refundETH2Seller(uint id,uint tokenValue,address seller)public checkPermission("refundETH2Seller"){
+        Order storage order=orders[id];
+        require(order.seller==seller,"seller address checked error");
+        require(order.status==OSMaking,"order is not making");
+        order.status=OSCanceled;
+        
+        require(income >= order.sellerFee,"ownerIncome less than sellerFee");
+        income-=order.sellerFee;
+        order.seller.transfer(order.amount+order.sellerFee);
+        
+        proxy.refundETH2SellerCall(id,tokenValue);
+    }
+    
+    function forceTransETH2Buyer(uint id,address buyer)public checkPermission("forceTransETH2Buyer"){
+        Order storage order=orders[id];
+        require(order.buyer==buyer,"buyer address checked error");
+        require(order.status==OSMaking,"order is not making");
+        order.status=OSFinished;
+        
+        uint fee=proxy.getOTCBuyerFee(order.buyer,order.amount);
+        require(order.amount > fee,"fee error");
+        uint actualHarvest=order.amount-fee;
+        income+=fee;
+        order.buyer.transfer(actualHarvest);
+        tradeVolume[order.buyer]+=actualHarvest;
+        
+        proxy.forceTransETH2BuyerCall(id);
+    }
+    
+    function getOrderbyId(uint id)public view returns(uint8 _status,address _buyer,address _seller,uint _amount,uint _sellerFee,uint _time){
+        Order memory o=orders[id];
+        _status=o.status;
+        _buyer=o.buyer;
+        _seller=o.seller;
+        _amount=o.amount;
+        _sellerFee=o.sellerFee;
+        _time=o.time;
+    }
+    
+}
